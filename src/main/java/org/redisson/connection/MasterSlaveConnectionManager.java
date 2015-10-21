@@ -49,8 +49,10 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.util.HashedWheelTimer;
 import io.netty.util.Timeout;
 import io.netty.util.TimerTask;
+import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.FutureListener;
 import io.netty.util.concurrent.Promise;
+import io.netty.util.internal.PlatformDependent;
 
 /**
  *
@@ -72,7 +74,7 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
 
     protected Class<? extends SocketChannel> socketChannelClass;
 
-    protected final ConcurrentMap<String, PubSubConnectionEntry> name2PubSubConnection = new ConcurrentHashMap<String, PubSubConnectionEntry>();
+    protected final ConcurrentMap<String, PubSubConnectionEntry> name2PubSubConnection = PlatformDependent.newConcurrentHashMap();
 
     protected MasterSlaveServersConfig config;
 
@@ -129,6 +131,7 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
 
     protected void initEntry(MasterSlaveServersConfig config) {
         MasterSlaveEntry entry = new MasterSlaveEntry(0, MAX_SLOT, this, config);
+        entry.setupMasterEntry(config.getMasterAddress().getHost(), config.getMasterAddress().getPort());
         entries.put(MAX_SLOT, entry);
     }
 
@@ -166,6 +169,12 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
         return new FutureListener<T>() {
             @Override
             public void operationComplete(io.netty.util.concurrent.Future<T> future) throws Exception {
+                if (!future.isSuccess()) {
+                    conn.incFailAttempt();
+                } else {
+                    conn.resetFailAttempt();
+                }
+
                 shutdownLatch.release();
                 timeout.cancel();
                 releaseWrite(slot, conn);
@@ -179,6 +188,12 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
         return new FutureListener<T>() {
             @Override
             public void operationComplete(io.netty.util.concurrent.Future<T> future) throws Exception {
+                if (!future.isSuccess()) {
+                    conn.incFailAttempt();
+                } else {
+                    conn.resetFailAttempt();
+                }
+
                 shutdownLatch.release();
                 timeout.cancel();
                 releaseRead(slot, conn);
@@ -208,12 +223,18 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
         return name2PubSubConnection.get(channelName);
     }
 
-    @Override
-    public PubSubConnectionEntry subscribe(String channelName) {
+    public Future<PubSubConnectionEntry> subscribe(String channelName, Codec codec) {
+        Promise<PubSubConnectionEntry> promise = group.next().newPromise();
+        subscribe(channelName, codec, promise);
+        return promise;
+    }
+
+    private void subscribe(final String channelName, final Codec codec, final Promise<PubSubConnectionEntry> promise) {
         // multiple channel names per PubSubConnections allowed
         PubSubConnectionEntry сonnEntry = name2PubSubConnection.get(channelName);
         if (сonnEntry != null) {
-            return сonnEntry;
+            promise.setSuccess(сonnEntry);
+            return;
         }
 
         Set<PubSubConnectionEntry> entries = new HashSet<PubSubConnectionEntry>(name2PubSubConnection.values());
@@ -222,47 +243,70 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
                 PubSubConnectionEntry oldEntry = name2PubSubConnection.putIfAbsent(channelName, entry);
                 if (oldEntry != null) {
                     entry.release();
-                    return oldEntry;
+                    promise.setSuccess(oldEntry);
+                    return;
                 }
 
                 synchronized (entry) {
                     if (!entry.isActive()) {
                         entry.release();
-                        return subscribe(channelName);
+                        subscribe(channelName, codec, promise);
+                        return;
                     }
                     entry.subscribe(codec, channelName);
-                    return entry;
+                    promise.setSuccess(entry);
+                    return;
                 }
             }
         }
 
-        int slot = 0;
-        RedisPubSubConnection conn = nextPubSubConnection(slot);
+        final int slot = 0;
+        Future<RedisPubSubConnection> connFuture = nextPubSubConnection(slot);
+        connFuture.addListener(new FutureListener<RedisPubSubConnection>() {
+            @Override
+            public void operationComplete(Future<RedisPubSubConnection> future) throws Exception {
+                if (!future.isSuccess()) {
+                    promise.setFailure(future.cause());
+                    return;
+                }
 
-        PubSubConnectionEntry entry = new PubSubConnectionEntry(conn, config.getSubscriptionsPerConnection());
-        entry.tryAcquire();
-        PubSubConnectionEntry oldEntry = name2PubSubConnection.putIfAbsent(channelName, entry);
-        if (oldEntry != null) {
-            releaseSubscribeConnection(slot, entry);
-            return oldEntry;
-        }
+                RedisPubSubConnection conn = future.getNow();
 
-        synchronized (entry) {
-            if (!entry.isActive()) {
-                entry.release();
-                return subscribe(channelName);
+                PubSubConnectionEntry entry = new PubSubConnectionEntry(conn, config.getSubscriptionsPerConnection());
+                entry.tryAcquire();
+                PubSubConnectionEntry oldEntry = name2PubSubConnection.putIfAbsent(channelName, entry);
+                if (oldEntry != null) {
+                    releaseSubscribeConnection(slot, entry);
+                    promise.setSuccess(oldEntry);
+                    return;
+                }
+
+                synchronized (entry) {
+                    if (!entry.isActive()) {
+                        entry.release();
+                        subscribe(channelName, codec, promise);
+                        return;
+                    }
+                    entry.subscribe(codec, channelName);
+                    promise.setSuccess(entry);
+                }
             }
-            entry.subscribe(codec, channelName);
-            return entry;
-        }
+        });
     }
 
     @Override
-    public PubSubConnectionEntry psubscribe(String channelName) {
-        // multiple channel names per PubSubConnections allowed
+    public Future<PubSubConnectionEntry> psubscribe(final String channelName, final Codec codec) {
+        Promise<PubSubConnectionEntry> promise = group.next().newPromise();
+        psubscribe(channelName, codec, promise);
+        return promise;
+    }
+
+    private void psubscribe(final String channelName, final Codec codec, final Promise<PubSubConnectionEntry> promise) {
+        // multiple channel names per PubSubConnections are allowed
         PubSubConnectionEntry сonnEntry = name2PubSubConnection.get(channelName);
         if (сonnEntry != null) {
-            return сonnEntry;
+            promise.setSuccess(сonnEntry);
+            return;
         }
 
         Set<PubSubConnectionEntry> entries = new HashSet<PubSubConnectionEntry>(name2PubSubConnection.values());
@@ -271,43 +315,59 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
                 PubSubConnectionEntry oldEntry = name2PubSubConnection.putIfAbsent(channelName, entry);
                 if (oldEntry != null) {
                     entry.release();
-                    return oldEntry;
+                    promise.setSuccess(oldEntry);
+                    return;
                 }
 
                 synchronized (entry) {
                     if (!entry.isActive()) {
                         entry.release();
-                        return psubscribe(channelName);
+                        psubscribe(channelName, codec, promise);
+                        return;
                     }
                     entry.psubscribe(codec, channelName);
-                    return entry;
+                    promise.setSuccess(entry);
+                    return;
                 }
             }
         }
 
-        int slot = 0;
-        RedisPubSubConnection conn = nextPubSubConnection(slot);
+        final int slot = 0;
+        Future<RedisPubSubConnection> connFuture = nextPubSubConnection(slot);
+        connFuture.addListener(new FutureListener<RedisPubSubConnection>() {
+            @Override
+            public void operationComplete(Future<RedisPubSubConnection> future) throws Exception {
+                if (!future.isSuccess()) {
+                    promise.setFailure(future.cause());
+                    return;
+                }
 
-        PubSubConnectionEntry entry = new PubSubConnectionEntry(conn, config.getSubscriptionsPerConnection());
-        entry.tryAcquire();
-        PubSubConnectionEntry oldEntry = name2PubSubConnection.putIfAbsent(channelName, entry);
-        if (oldEntry != null) {
-            releaseSubscribeConnection(slot, entry);
-            return oldEntry;
-        }
+                RedisPubSubConnection conn = future.getNow();
 
-        synchronized (entry) {
-            if (!entry.isActive()) {
-                entry.release();
-                return psubscribe(channelName);
+                PubSubConnectionEntry entry = new PubSubConnectionEntry(conn, config.getSubscriptionsPerConnection());
+                entry.tryAcquire();
+                PubSubConnectionEntry oldEntry = name2PubSubConnection.putIfAbsent(channelName, entry);
+                if (oldEntry != null) {
+                    releaseSubscribeConnection(slot, entry);
+                    promise.setSuccess(oldEntry);
+                    return;
+                }
+
+                synchronized (entry) {
+                    if (!entry.isActive()) {
+                        entry.release();
+                        psubscribe(channelName, codec, promise);
+                        return;
+                    }
+                    entry.psubscribe(codec, channelName);
+                    promise.setSuccess(entry);
+                }
             }
-            entry.psubscribe(codec, channelName);
-            return entry;
-        }
+        });
     }
 
     @Override
-    public void subscribe(RedisPubSubListener listener, String channelName) {
+    public void subscribe(final RedisPubSubListener listener, final String channelName) {
         PubSubConnectionEntry сonnEntry = name2PubSubConnection.get(channelName);
         if (сonnEntry != null) {
             сonnEntry.subscribe(codec, listener, channelName);
@@ -334,9 +394,10 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
             }
         }
 
-        int slot = 0;
-        RedisPubSubConnection conn = nextPubSubConnection(slot);
-
+        final int slot = 0;
+        Future<RedisPubSubConnection> connFuture = nextPubSubConnection(slot);
+        connFuture.syncUninterruptibly();
+        RedisPubSubConnection conn = connFuture.getNow();
         PubSubConnectionEntry entry = new PubSubConnectionEntry(conn, config.getSubscriptionsPerConnection());
         entry.tryAcquire();
         PubSubConnectionEntry oldEntry = name2PubSubConnection.putIfAbsent(channelName, entry);
@@ -353,15 +414,17 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
             entry.subscribe(codec, listener, channelName);
             return;
         }
+
     }
 
     @Override
-    public void unsubscribe(final String channelName) {
+    public Codec unsubscribe(final String channelName) {
         final PubSubConnectionEntry entry = name2PubSubConnection.remove(channelName);
         if (entry == null) {
-            return;
+            return null;
         }
 
+        Codec entryCodec = entry.getConnection().getChannels().get(channelName);
         entry.unsubscribe(channelName, new BaseRedisPubSubListener() {
 
             @Override
@@ -378,15 +441,17 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
             }
 
         });
+        return entryCodec;
     }
 
     @Override
-    public void punsubscribe(final String channelName) {
+    public Codec punsubscribe(final String channelName) {
         final PubSubConnectionEntry entry = name2PubSubConnection.remove(channelName);
         if (entry == null) {
-            return;
+            return null;
         }
 
+        Codec entryCodec = entry.getConnection().getPatternChannels().get(channelName);
         entry.punsubscribe(channelName, new BaseRedisPubSubListener() {
 
             @Override
@@ -403,6 +468,7 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
             }
 
         });
+        return entryCodec;
     }
 
     protected MasterSlaveEntry getEntry(int slot) {
@@ -416,7 +482,7 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
         for (Entry<String, PubSubConnectionEntry> mapEntry : name2PubSubConnection.entrySet()) {
             for (RedisPubSubConnection redisPubSubConnection : allPubSubConnections) {
                 PubSubConnectionEntry entry = mapEntry.getValue();
-                String channelName = mapEntry.getKey();
+                final String channelName = mapEntry.getKey();
 
                 if (!entry.getConnection().equals(redisPubSubConnection)) {
                     continue;
@@ -425,14 +491,40 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
                 synchronized (entry) {
                     entry.close();
 
-                    Collection<RedisPubSubListener> listeners = entry.getListeners(channelName);
-                    unsubscribe(channelName);
-                    if (!listeners.isEmpty()) {
-                        PubSubConnectionEntry newEntry = subscribe(channelName);
-                        for (RedisPubSubListener redisPubSubListener : listeners) {
-                            newEntry.addListener(channelName, redisPubSubListener);
+                    final Collection<RedisPubSubListener> listeners = entry.getListeners(channelName);
+                    if (entry.getConnection().getPatternChannels().get(channelName) != null) {
+                        Codec subscribeCodec = punsubscribe(channelName);
+                        if (!listeners.isEmpty()) {
+                            Future<PubSubConnectionEntry> future = psubscribe(channelName, subscribeCodec);
+                            future.addListener(new FutureListener<PubSubConnectionEntry>() {
+                                @Override
+                                public void operationComplete(Future<PubSubConnectionEntry> future)
+                                        throws Exception {
+                                    PubSubConnectionEntry newEntry = future.getNow();
+                                    for (RedisPubSubListener redisPubSubListener : listeners) {
+                                        newEntry.addListener(channelName, redisPubSubListener);
+                                    }
+                                    log.debug("resubscribed listeners for '{}' channel-pattern", channelName);
+                                }
+                            });
                         }
-                        log.debug("resubscribed listeners for '{}' channel", channelName);
+                    } else {
+                        Codec subscribeCodec = unsubscribe(channelName);
+                        if (!listeners.isEmpty()) {
+                            Future<PubSubConnectionEntry> future = subscribe(channelName, subscribeCodec);
+                            future.addListener(new FutureListener<PubSubConnectionEntry>() {
+
+                                @Override
+                                public void operationComplete(Future<PubSubConnectionEntry> future)
+                                        throws Exception {
+                                    PubSubConnectionEntry newEntry = future.getNow();
+                                    for (RedisPubSubListener redisPubSubListener : listeners) {
+                                        newEntry.addListener(channelName, redisPubSubListener);
+                                    }
+                                    log.debug("resubscribed listeners for '{}' channel", channelName);
+                                }
+                            });
+                        }
                     }
                 }
             }
@@ -448,7 +540,7 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
     }
 
     @Override
-    public RedisConnection connectionWriteOp(int slot) {
+    public Future<RedisConnection> connectionWriteOp(int slot) {
         MasterSlaveEntry e = getEntry(slot);
         if (!e.isOwn(slot)) {
             throw new RedisEmptySlotException("No node for slot: " + slot, slot);
@@ -457,7 +549,7 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
     }
 
     @Override
-    public RedisConnection connectionReadOp(int slot) {
+    public Future<RedisConnection> connectionReadOp(int slot) {
         MasterSlaveEntry e = getEntry(slot);
         if (!e.isOwn(slot)) {
             throw new RedisEmptySlotException("No node for slot: " + slot, slot);
@@ -466,7 +558,7 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
     }
 
     @Override
-    public RedisConnection connectionReadOp(int slot, RedisClient client) {
+    public Future<RedisConnection> connectionReadOp(int slot, RedisClient client) {
         MasterSlaveEntry e = getEntry(slot);
         if (!e.isOwn(slot)) {
             throw new RedisEmptySlotException("No node for slot: " + slot, slot);
@@ -474,7 +566,7 @@ public class MasterSlaveConnectionManager implements ConnectionManager {
         return e.connectionReadOp(client);
     }
 
-    RedisPubSubConnection nextPubSubConnection(int slot) {
+    Future<RedisPubSubConnection> nextPubSubConnection(int slot) {
         return getEntry(slot).nextPubSubConnection();
     }
 

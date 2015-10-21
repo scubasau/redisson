@@ -13,16 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.redisson.client.protocol.convertor;
+package org.redisson.codec;
 
-public class IntegerReplayConvertor extends SingleConvertor<Integer> {
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.cbor.CBORFactory;
 
-    @Override
-    public Integer convert(Object obj) {
-        if (obj == null) {
-            return null;
-        }
-        return ((Long) obj).intValue();
-    }
-
+/**
+ *
+ * @author Faye Li
+ * @date 2015-10-16
+ */
+public class CborJacksonCodec extends JsonJacksonCodec {
+	@Override
+	protected ObjectMapper initObjectMapper() {
+		return new ObjectMapper(new CBORFactory());
+	}
 }

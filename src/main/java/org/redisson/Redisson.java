@@ -22,9 +22,11 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.redisson.client.codec.Codec;
 import org.redisson.client.protocol.RedisCommands;
 import org.redisson.connection.ClusterConnectionManager;
 import org.redisson.connection.ConnectionManager;
+import org.redisson.connection.ElasticacheConnectionManager;
 import org.redisson.connection.MasterSlaveConnectionManager;
 import org.redisson.connection.SentinelConnectionManager;
 import org.redisson.connection.SingleConnectionManager;
@@ -39,6 +41,7 @@ import org.redisson.core.RCountDownLatch;
 import org.redisson.core.RDeque;
 import org.redisson.core.RHyperLogLog;
 import org.redisson.core.RKeys;
+import org.redisson.core.RLexSortedSet;
 import org.redisson.core.RList;
 import org.redisson.core.RLock;
 import org.redisson.core.RMap;
@@ -78,6 +81,8 @@ public class Redisson implements RedissonClient {
             connectionManager = new SentinelConnectionManager(configCopy.getSentinelServersConfig(), configCopy);
         } else if (configCopy.getClusterServersConfig() != null) {
             connectionManager = new ClusterConnectionManager(configCopy.getClusterServersConfig(), configCopy);
+        } else if (configCopy.getElasticacheServersConfig() != null) {
+            connectionManager = new ElasticacheConnectionManager(configCopy.getElasticacheServersConfig(), configCopy);
         } else {
             throw new IllegalArgumentException("server(s) address(es) not defined!");
         }
@@ -119,6 +124,12 @@ public class Redisson implements RedissonClient {
         return new RedissonBucket<V>(commandExecutor, name);
     }
 
+    @Override
+    public <V> RBucket<V> getBucket(String name, Codec codec) {
+        return new RedissonBucket<V>(codec, commandExecutor, name);
+    }
+
+
     /**
      * Returns a list of object holder by a key pattern
      *
@@ -153,6 +164,12 @@ public class Redisson implements RedissonClient {
         return new RedissonHyperLogLog<V>(commandExecutor, name);
     }
 
+    @Override
+    public <V> RHyperLogLog<V> getHyperLogLog(String name, Codec codec) {
+        return new RedissonHyperLogLog<V>(codec, commandExecutor, name);
+    }
+
+
     /**
      * Returns distributed list instance by name.
      *
@@ -164,6 +181,11 @@ public class Redisson implements RedissonClient {
         return new RedissonList<V>(commandExecutor, name);
     }
 
+    @Override
+    public <V> RList<V> getList(String name, Codec codec) {
+        return new RedissonList<V>(codec, commandExecutor, name);
+    }
+
     /**
      * Returns distributed map instance by name.
      *
@@ -173,6 +195,11 @@ public class Redisson implements RedissonClient {
     @Override
     public <K, V> RMap<K, V> getMap(String name) {
         return new RedissonMap<K, V>(commandExecutor, name);
+    }
+
+    @Override
+    public <K, V> RMap<K, V> getMap(String name, Codec codec) {
+        return new RedissonMap<K, V>(codec, commandExecutor, name);
     }
 
     /**
@@ -197,11 +224,18 @@ public class Redisson implements RedissonClient {
         return new RedissonSet<V>(commandExecutor, name);
     }
 
+    @Override
+    public <V> RSet<V> getSet(String name, Codec codec) {
+        return new RedissonSet<V>(codec, commandExecutor, name);
+    }
+
+
     /**
      * Returns script with eval-operations support
      *
      * @return
      */
+    @Override
     public RScript getScript() {
         return new RedissonScript(commandExecutor);
     }
@@ -217,8 +251,39 @@ public class Redisson implements RedissonClient {
         return new RedissonSortedSet<V>(commandExecutor, name);
     }
 
+    @Override
+    public <V> RSortedSet<V> getSortedSet(String name, Codec codec) {
+        return new RedissonSortedSet<V>(codec, commandExecutor, name);
+    }
+
+
+    /**
+     * Returns Redis Sorted Set instance by name
+     *
+     * @param name
+     * @return
+     */
+    @Override
     public <V> RScoredSortedSet<V> getScoredSortedSet(String name) {
         return new RedissonScoredSortedSet<V>(commandExecutor, name);
+    }
+
+    @Override
+    public <V> RScoredSortedSet<V> getScoredSortedSet(String name, Codec codec) {
+        return new RedissonScoredSortedSet<V>(codec, commandExecutor, name);
+    }
+
+    /**
+     * Returns String based Redis Sorted Set instance by name
+     * All elements are inserted with the same score during addition,
+     * in order to force lexicographical ordering
+     *
+     * @param name
+     * @return
+     */
+    @Override
+    public RLexSortedSet getLexSortedSet(String name) {
+        return new RedissonLexSortedSet(commandExecutor, name);
     }
 
     /**
@@ -230,6 +295,11 @@ public class Redisson implements RedissonClient {
     @Override
     public <M> RTopic<M> getTopic(String name) {
         return new RedissonTopic<M>(commandExecutor, name);
+    }
+
+    @Override
+    public <M> RTopic<M> getTopic(String name, Codec codec) {
+        return new RedissonTopic<M>(codec, commandExecutor, name);
     }
 
     /**
@@ -248,6 +318,12 @@ public class Redisson implements RedissonClient {
         return new RedissonPatternTopic<M>(commandExecutor, pattern);
     }
 
+    @Override
+    public <M> RPatternTopic<M> getPatternTopic(String pattern, Codec codec) {
+        return new RedissonPatternTopic<M>(codec, commandExecutor, pattern);
+    }
+
+
     /**
      * Returns distributed queue instance by name.
      *
@@ -257,6 +333,11 @@ public class Redisson implements RedissonClient {
     @Override
     public <V> RQueue<V> getQueue(String name) {
         return new RedissonQueue<V>(commandExecutor, name);
+    }
+
+    @Override
+    public <V> RQueue<V> getQueue(String name, Codec codec) {
+        return new RedissonQueue<V>(codec, commandExecutor, name);
     }
 
     /**
@@ -270,6 +351,11 @@ public class Redisson implements RedissonClient {
         return new RedissonBlockingQueue<V>(commandExecutor, name);
     }
 
+    @Override
+    public <V> RBlockingQueue<V> getBlockingQueue(String name, Codec codec) {
+        return new RedissonBlockingQueue<V>(codec, commandExecutor, name);
+    }
+
     /**
      * Returns distributed deque instance by name.
      *
@@ -279,6 +365,11 @@ public class Redisson implements RedissonClient {
     @Override
     public <V> RDeque<V> getDeque(String name) {
         return new RedissonDeque<V>(commandExecutor, name);
+    }
+
+    @Override
+    public <V> RDeque<V> getDeque(String name, Codec codec) {
+        return new RedissonDeque<V>(codec, commandExecutor, name);
     }
 
     /**

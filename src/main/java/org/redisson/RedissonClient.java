@@ -18,6 +18,7 @@ package org.redisson;
 import java.util.Collection;
 import java.util.List;
 
+import org.redisson.client.codec.Codec;
 import org.redisson.core.ClusterNode;
 import org.redisson.core.Node;
 import org.redisson.core.NodesGroup;
@@ -29,11 +30,13 @@ import org.redisson.core.RCountDownLatch;
 import org.redisson.core.RDeque;
 import org.redisson.core.RHyperLogLog;
 import org.redisson.core.RKeys;
+import org.redisson.core.RLexSortedSet;
 import org.redisson.core.RList;
 import org.redisson.core.RLock;
 import org.redisson.core.RMap;
 import org.redisson.core.RPatternTopic;
 import org.redisson.core.RQueue;
+import org.redisson.core.RScoredSortedSet;
 import org.redisson.core.RScript;
 import org.redisson.core.RSet;
 import org.redisson.core.RSortedSet;
@@ -51,6 +54,8 @@ public interface RedissonClient {
      */
     <V> RBucket<V> getBucket(String name);
 
+    <V> RBucket<V> getBucket(String name, Codec codec);
+
     /**
      * Returns a list of object holder by a key pattern
      */
@@ -64,6 +69,8 @@ public interface RedissonClient {
      */
     <V> RHyperLogLog<V> getHyperLogLog(String name);
 
+    <V> RHyperLogLog<V> getHyperLogLog(String name, Codec codec);
+
     /**
      * Returns list instance by name.
      *
@@ -72,6 +79,8 @@ public interface RedissonClient {
      */
     <V> RList<V> getList(String name);
 
+    <V> RList<V> getList(String name, Codec codec);
+
     /**
      * Returns map instance by name.
      *
@@ -79,6 +88,8 @@ public interface RedissonClient {
      * @return
      */
     <K, V> RMap<K, V> getMap(String name);
+
+    <K, V> RMap<K, V> getMap(String name, Codec codec);
 
     /**
      * Returns lock instance by name.
@@ -96,6 +107,8 @@ public interface RedissonClient {
      */
     <V> RSet<V> getSet(String name);
 
+    <V> RSet<V> getSet(String name, Codec codec);
+
     /**
      * Returns sorted set instance by name.
      *
@@ -104,6 +117,28 @@ public interface RedissonClient {
      */
     <V> RSortedSet<V> getSortedSet(String name);
 
+    <V> RSortedSet<V> getSortedSet(String name, Codec codec);
+
+    /**
+     * Returns Redis Sorted Set instance by name
+     *
+     * @param name
+     * @return
+     */
+    <V> RScoredSortedSet<V> getScoredSortedSet(String name);
+
+    <V> RScoredSortedSet<V> getScoredSortedSet(String name, Codec codec);
+
+    /**
+     * Returns String based Redis Sorted Set instance by name
+     * All elements are inserted with the same score during addition,
+     * in order to force lexicographical ordering
+     *
+     * @param name
+     * @return
+     */
+    RLexSortedSet getLexSortedSet(String name);
+
     /**
      * Returns topic instance by name.
      *
@@ -111,6 +146,8 @@ public interface RedissonClient {
      * @return
      */
     <M> RTopic<M> getTopic(String name);
+
+    <M> RTopic<M> getTopic(String name, Codec codec);
 
     /**
      * Returns topic instance satisfies by pattern name.
@@ -125,6 +162,8 @@ public interface RedissonClient {
      */
     <M> RPatternTopic<M> getPatternTopic(String pattern);
 
+    <M> RPatternTopic<M> getPatternTopic(String pattern, Codec codec);
+
     /**
      * Returns queue instance by name.
      *
@@ -132,6 +171,8 @@ public interface RedissonClient {
      * @return
      */
     <V> RQueue<V> getQueue(String name);
+
+    <V> RQueue<V> getQueue(String name, Codec codec);
 
     /**
      * Returns blocking queue instance by name.
@@ -141,6 +182,8 @@ public interface RedissonClient {
      */
     <V> RBlockingQueue<V> getBlockingQueue(String name);
 
+    <V> RBlockingQueue<V> getBlockingQueue(String name, Codec codec);
+
     /**
      * Returns deque instance by name.
      *
@@ -148,6 +191,8 @@ public interface RedissonClient {
      * @return
      */
     <V> RDeque<V> getDeque(String name);
+
+    <V> RDeque<V> getDeque(String name, Codec codec);
 
     /**
      * Returns "atomic long" instance by name.

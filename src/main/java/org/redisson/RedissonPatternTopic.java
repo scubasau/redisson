@@ -19,10 +19,13 @@ import java.util.Collections;
 import java.util.List;
 
 import org.redisson.client.RedisPubSubListener;
+import org.redisson.client.codec.Codec;
 import org.redisson.connection.PubSubConnectionEntry;
 import org.redisson.core.PatternMessageListener;
 import org.redisson.core.PatternStatusListener;
 import org.redisson.core.RPatternTopic;
+
+import io.netty.util.concurrent.Future;
 
 /**
  * Distributed topic implementation. Messages are delivered to all message listeners across Redis cluster.
@@ -35,10 +38,16 @@ public class RedissonPatternTopic<M> implements RPatternTopic<M> {
 
     final CommandExecutor commandExecutor;
     private final String name;
+    private final Codec codec;
 
     protected RedissonPatternTopic(CommandExecutor commandExecutor, String name) {
+        this(commandExecutor.getConnectionManager().getCodec(), commandExecutor, name);
+    }
+
+    protected RedissonPatternTopic(Codec codec, CommandExecutor commandExecutor, String name) {
         this.commandExecutor = commandExecutor;
         this.name = name;
+        this.codec = codec;
     }
 
     @Override
@@ -53,7 +62,9 @@ public class RedissonPatternTopic<M> implements RPatternTopic<M> {
     }
 
     private int addListener(RedisPubSubListener<M> pubSubListener) {
-        PubSubConnectionEntry entry = commandExecutor.getConnectionManager().psubscribe(name);
+        Future<PubSubConnectionEntry> future = commandExecutor.getConnectionManager().psubscribe(name, codec);
+        future.syncUninterruptibly();
+        PubSubConnectionEntry entry = future.getNow();
         synchronized (entry) {
             if (entry.isActive()) {
                 entry.addListener(name, pubSubListener);

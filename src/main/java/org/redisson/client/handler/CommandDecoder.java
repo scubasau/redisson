@@ -62,7 +62,7 @@ public class CommandDecoder extends ReplayingDecoder<State> {
     public static final char LF = '\n';
     private static final char ZERO = '0';
 
-    // no need concurrent map responses are coming consecutive
+    // It is not needed to use concurrent map because responses are coming consecutive
     private final Map<String, MultiDecoder<Object>> messageDecoders = new HashMap<String, MultiDecoder<Object>>();
     private final Map<String, CommandData<Object, Object>> channels = PlatformDependent.newConcurrentHashMap();
 
@@ -126,7 +126,7 @@ public class CommandDecoder extends ReplayingDecoder<State> {
 
             if (i == commands.getCommands().size()) {
                 Promise<Void> promise = commands.getPromise();
-                if (!promise.trySuccess(null) && promise.isCancelled()) {
+                if (!promise.trySuccess(null)) {
                     log.warn("response has been skipped due to timeout! channel: {}, command: {}", ctx.channel(), data);
                 }
 
@@ -199,7 +199,12 @@ public class CommandDecoder extends ReplayingDecoder<State> {
             decode(in, data, respParts, channel, currentDecoder);
         }
 
-        Object result = messageDecoder(data, respParts).decode(respParts, state());
+        MultiDecoder<Object> decoder = messageDecoder(data, respParts, channel);
+        if (decoder == null) {
+            return;
+        }
+
+        Object result = decoder.decode(respParts, state());
 
         if (result instanceof Message) {
             handleMultiResult(data, null, channel, result);
@@ -214,7 +219,9 @@ public class CommandDecoder extends ReplayingDecoder<State> {
 
     private void handleMultiResult(CommandData<Object, Object> data, List<Object> parts,
             Channel channel, Object result) {
-        if (data == null) {
+        if (data != null) {
+            handleResult(data, parts, result, true, channel);
+        } else {
             if (result instanceof PubSubStatusMessage) {
                 String channelName = ((PubSubStatusMessage) result).getChannel();
                 CommandData<Object, Object> d = channels.get(channelName);
@@ -227,11 +234,7 @@ public class CommandDecoder extends ReplayingDecoder<State> {
                     messageDecoders.remove(channelName);
                 }
             }
-        }
 
-        if (data != null) {
-            handleResult(data, parts, result, true, channel);
-        } else {
             RedisPubSubConnection pubSubConnection = (RedisPubSubConnection)channel.attr(RedisPubSubConnection.CONNECTION).get();
             if (result instanceof PubSubStatusMessage) {
                 pubSubConnection.onMessage((PubSubStatusMessage) result);
@@ -254,17 +257,21 @@ public class CommandDecoder extends ReplayingDecoder<State> {
         if (parts != null) {
             parts.add(result);
         } else {
-            if (!data.getPromise().trySuccess(result) && data.getPromise().isCancelled()) {
+            if (!data.getPromise().trySuccess(result)) {
                 log.warn("response has been skipped due to timeout! channel: {}, command: {}, result: {}", channel, data, result);
             }
         }
     }
 
-    private MultiDecoder<Object> messageDecoder(CommandData<Object, Object> data, List<Object> parts) {
+    private MultiDecoder<Object> messageDecoder(CommandData<Object, Object> data, List<Object> parts, Channel channel) {
         if (data == null) {
             if (Arrays.asList("subscribe", "psubscribe", "punsubscribe", "unsubscribe").contains(parts.get(0))) {
                 String channelName = (String) parts.get(1);
-                return channels.get(channelName).getCommand().getReplayMultiDecoder();
+                CommandData<Object, Object> commandData = channels.get(channelName);
+                if (commandData == null) {
+                    return null;
+                }
+                return commandData.getCommand().getReplayMultiDecoder();
             } else if (parts.get(0).equals("message")) {
                 String channelName = (String) parts.get(1);
                 return messageDecoders.get(channelName);

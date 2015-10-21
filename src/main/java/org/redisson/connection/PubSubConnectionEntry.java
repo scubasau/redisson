@@ -42,6 +42,7 @@ public class PubSubConnectionEntry {
     private final Semaphore subscribedChannelsAmount;
     private final RedisPubSubConnection conn;
     private final int subscriptionsPerConnection;
+
     private final ConcurrentMap<String, Queue<RedisPubSubListener>> channelListeners = new ConcurrentHashMap<String, Queue<RedisPubSubListener>>();
 
     public PubSubConnectionEntry(RedisPubSubConnection conn, int subscriptionsPerConnection) {
@@ -121,11 +122,11 @@ public class PubSubConnectionEntry {
         subscribedChannelsAmount.release();
     }
 
-    public void subscribe(Codec codec, final String channelName) {
+    public void subscribe(Codec codec, String channelName) {
         conn.subscribe(codec, channelName);
     }
 
-    public void psubscribe(Codec codec, final String pattern) {
+    public void psubscribe(Codec codec, String pattern) {
         conn.psubscribe(codec, pattern);
     }
 

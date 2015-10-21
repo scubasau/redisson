@@ -33,6 +33,8 @@ import io.netty.util.concurrent.Future;
 //TODO ping support
 public interface CommandExecutor {
 
+    <T, R> R read(RedisClient client, String key, Codec codec, RedisCommand<T> command, Object ... params);
+
     <T, R> R read(RedisClient client, String key, RedisCommand<T> command, Object ... params);
 
     <T, R> Future<R> evalWriteAllAsync(RedisCommand<T> command, SlotCallback<T, R> callback, String script, List<Object> keys, Object ... params);
@@ -58,9 +60,9 @@ public interface CommandExecutor {
     <T, R> R evalWrite(String key, Codec codec, RedisCommand<T> evalCommandType, String script, List<Object> keys, Object ... params);
 
 
-    <R> R read(String key, SyncOperation<R> operation);
+    <R> R read(String key, Codec codec, SyncOperation<R> operation);
 
-    <R> R write(String key, SyncOperation<R> operation);
+    <R> R write(String key, Codec codec, SyncOperation<R> operation);
 
     <T, R> R read(String key, Codec codec, RedisCommand<T> command, Object ... params);
 
